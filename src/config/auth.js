@@ -10,11 +10,19 @@ export function createAuth(authDb) {
     !googleClientId.startsWith("add_") &&
     !googleClientSecret.startsWith("add_");
 
+  const isProduction = process.env.NODE_ENV === "production";
+
   return betterAuth({
     database: mongodbAdapter(authDb),
     secret: process.env.BETTER_AUTH_SECRET,
     baseURL: process.env.BETTER_AUTH_URL,
     trustedOrigins: [process.env.CLIENT_URL || "http://localhost:3000"],
+    advanced: {
+      useSecureCookies: isProduction,
+      defaultCookieAttributes: isProduction
+        ? { sameSite: "none", secure: true, httpOnly: true, path: "/" }
+        : {},
+    },
     emailAndPassword: {
       enabled: true
     },
