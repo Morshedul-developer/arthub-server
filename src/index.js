@@ -41,15 +41,19 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ message: "Server error. Please try again." });
 });
 
-const server = app.listen(port, () => {
-  console.log(`ArtHub server running on http://localhost:${port}`);
-});
+if (process.env.NODE_ENV !== "production") {
+  const server = app.listen(port, () => {
+    console.log(`ArtHub server running on http://localhost:${port}`);
+  });
 
-server.on("error", (error) => {
-  if (error.code === "EADDRINUSE") {
-    console.error(`Port ${port} is already in use. Set PORT to another value in server/.env, for example PORT=5001.`);
-    process.exit(1);
-  }
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`Port ${port} is already in use. Set PORT to another value in server/.env, for example PORT=5001.`);
+      process.exit(1);
+    }
 
-  throw error;
-});
+    throw error;
+  });
+}
+
+export default app;
