@@ -2,7 +2,7 @@
 
 **ArtHub** is an online art marketplace where collectors can discover and purchase original artworks, artists can showcase and sell their pieces, and admins can manage the platform. This is the Express.js + MongoDB backend.
 
-**Live URL:** _https://arthub-api.up.railway.app_ _(placeholder — update after deployment)_
+**Live URL:** https://arthub-iota.vercel.app
 
 ## Key Features
 
