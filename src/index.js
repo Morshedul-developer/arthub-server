@@ -7,6 +7,7 @@ import { connectDatabase } from "./config/database.js";
 import { createAuth } from "./config/auth.js";
 import { createSessionMiddleware } from "./middleware/session.js";
 import { apiRoutes } from "./routes/index.js";
+import { authRoutes } from "./routes/auth.routes.js";
 
 const app = express();
 const port = Number(process.env.PORT || 5001);
@@ -26,10 +27,16 @@ const sessionTools = { ...createSessionMiddleware(auth), auth };
 app.options("*", cors(corsOptions));
 app.use(cors(corsOptions));
 
-app.all("/api/auth/*", toNodeHandler(auth));
-app.use(express.json());
 app.use(cookieParser());
 app.use(sessionTools.attachUser);
+
+// App-specific auth routes must be registered before the better-auth
+// catch-all below, or "/api/auth/*" intercepts /token and /logout first
+// and they never run.
+app.use("/api/auth", authRoutes(sessionTools));
+app.all("/api/auth/*", toNodeHandler(auth));
+
+app.use(express.json());
 app.use("/api", apiRoutes(sessionTools));
 
 app.use((req, res) => {
