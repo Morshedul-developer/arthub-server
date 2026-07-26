@@ -22,6 +22,31 @@ export function paymentRoutes({ requireAuth }) {
       ? new Stripe(stripeKey)
       : null;
 
+  const priceCache = new Map(); // tier -> Stripe Price id, reused across requests
+
+  async function getOrCreatePrice(tier) {
+    if (priceCache.has(tier)) return priceCache.get(tier);
+
+    const lookupKey = `arthub_${tier}_monthly`;
+    const existing = await stripe.prices.list({ lookup_keys: [lookupKey], active: true, limit: 1 });
+    if (existing.data.length > 0) {
+      priceCache.set(tier, existing.data[0].id);
+      return existing.data[0].id;
+    }
+
+    const product = await stripe.products.create({ name: `ArtHub ${tier} subscription` });
+    const price = await stripe.prices.create({
+      unit_amount: Math.round(tierPrices[tier] * 100),
+      currency: "usd",
+      recurring: { interval: "month" },
+      product: product.id,
+      lookup_key: lookupKey
+    });
+
+    priceCache.set(tier, price.id);
+    return price.id;
+  }
+
   async function fulfillCheckoutSession(session) {
     if (session.payment_status !== "paid") return;
 
@@ -52,6 +77,23 @@ export function paymentRoutes({ requireAuth }) {
         user.subscriptionTier = session.metadata.tier;
         await user.save();
       }
+    }
+  }
+
+  async function handleSubscriptionLifecycleEvent(subscription) {
+    const userId = subscription.metadata?.userId;
+    if (!userId) {
+      console.error(`Stripe webhook: subscription ${subscription.id} has no userId metadata`);
+      return;
+    }
+
+    // Renewals/no-op transitions keep the tier already set at checkout completion.
+    if (["active", "trialing"].includes(subscription.status)) return;
+
+    const user = await User.findById(userId);
+    if (user && user.subscriptionTier !== "free") {
+      user.subscriptionTier = "free";
+      await user.save();
     }
   }
 
@@ -181,25 +223,24 @@ export function paymentRoutes({ requireAuth }) {
         });
       }
 
+      const priceId = await getOrCreatePrice(tier);
+
       const session = await stripe.checkout.sessions.create({
-        mode: "payment",
+        mode: "subscription",
         payment_method_types: ["card"],
         success_url: process.env.STRIPE_SUCCESS_URL,
         cancel_url: process.env.STRIPE_CANCEL_URL,
-        line_items: [
-          {
-            price_data: {
-              currency: "usd",
-              product_data: { name: `ArtHub ${tier} subscription` },
-              unit_amount: Math.round(tierPrices[tier] * 100)
-            },
-            quantity: 1
-          }
-        ],
+        line_items: [{ price: priceId, quantity: 1 }],
         metadata: {
           type: "subscription",
           userId: String(req.user._id),
           tier
+        },
+        subscription_data: {
+          metadata: {
+            userId: String(req.user._id),
+            tier
+          }
         }
       });
 
@@ -259,6 +300,16 @@ export function paymentRoutes({ requireAuth }) {
         await fulfillCheckoutSession(event.data.object);
       } catch (err) {
         console.error("Stripe webhook fulfillment failed:", err);
+        return res.status(500).json({ message: "Webhook handler failed." });
+      }
+    } else if (
+      event.type === "customer.subscription.updated" ||
+      event.type === "customer.subscription.deleted"
+    ) {
+      try {
+        await handleSubscriptionLifecycleEvent(event.data.object);
+      } catch (err) {
+        console.error("Stripe webhook subscription-lifecycle handling failed:", err);
         return res.status(500).json({ message: "Webhook handler failed." });
       }
     }
