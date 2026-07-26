@@ -12,8 +12,26 @@ import { authRoutes } from "./routes/auth.routes.js";
 const app = express();
 const port = Number(process.env.PORT || 5001);
 
+function stripTrailingSlash(value) {
+  return value?.replace(/\/+$/, "");
+}
+
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  "http://localhost:3000",
+  "https://arthub-iota.vercel.app"
+]
+  .filter(Boolean)
+  .map(stripTrailingSlash);
+
 const corsOptions = {
-  origin: process.env.CLIENT_URL || "http://localhost:3000",
+  origin(origin, callback) {
+    // No Origin header (curl, server-to-server, health checks) — nothing to check against.
+    if (!origin || allowedOrigins.includes(stripTrailingSlash(origin))) {
+      return callback(null, true);
+    }
+    callback(new Error(`CORS: origin "${origin}" is not allowed.`));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"],
