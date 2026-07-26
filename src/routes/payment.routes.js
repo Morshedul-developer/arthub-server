@@ -53,6 +53,10 @@ export function paymentRoutes({ requireAuth }) {
       }
 
       if (!stripe) {
+        if (process.env.NODE_ENV === "production") {
+          return next(new Error("STRIPE_SECRET_KEY is missing or invalid. Refusing to process a purchase without real payment verification in production."));
+        }
+
         const transaction = await Transaction.create({
           type: "purchase",
           artwork: artwork._id,
@@ -120,6 +124,10 @@ export function paymentRoutes({ requireAuth }) {
       }
 
       if (!stripe) {
+        if (process.env.NODE_ENV === "production") {
+          return next(new Error("STRIPE_SECRET_KEY is missing or invalid. Refusing to process a subscription without real payment verification in production."));
+        }
+
         req.user.subscriptionTier = tier;
         await req.user.save();
 
