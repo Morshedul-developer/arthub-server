@@ -16,10 +16,44 @@ const tierPrices = {
 export function paymentRoutes({ requireAuth }) {
   const router = express.Router();
   const stripeKey = process.env.STRIPE_SECRET_KEY;
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   const stripe =
     stripeKey && !stripeKey.startsWith("sk_test_add")
       ? new Stripe(stripeKey)
       : null;
+
+  async function fulfillCheckoutSession(session) {
+    if (session.payment_status !== "paid") return;
+
+    const transaction = await Transaction.findOne({ stripeSessionId: session.id });
+    if (!transaction) {
+      console.error(`Stripe webhook: no transaction found for session ${session.id}`);
+      return;
+    }
+
+    if (transaction.status === "paid") return; // already fulfilled — idempotent
+
+    transaction.status = "paid";
+    await transaction.save();
+
+    if (session.metadata?.type === "purchase") {
+      const [artwork, buyer] = await Promise.all([
+        Artwork.findById(transaction.artwork),
+        User.findById(transaction.buyer)
+      ]);
+      if (artwork) artwork.status = "sold";
+      if (buyer) buyer.purchaseCount = (buyer.purchaseCount || 0) + 1;
+      await Promise.all([artwork?.save(), buyer?.save()].filter(Boolean));
+    }
+
+    if (session.metadata?.type === "subscription") {
+      const user = await User.findById(transaction.buyer);
+      if (user) {
+        user.subscriptionTier = session.metadata.tier;
+        await user.save();
+      }
+    }
+  }
 
   router.post("/purchase", requireAuth, async (req, res, next) => {
     try {
@@ -187,12 +221,7 @@ export function paymentRoutes({ requireAuth }) {
   router.post("/verify", requireAuth, async (req, res, next) => {
     try {
       const { sessionId } = req.body;
-      if (!stripe || !sessionId) return res.status(400).json({ message: "Invalid request." });
-
-      const session = await stripe.checkout.sessions.retrieve(sessionId);
-      if (session.payment_status !== "paid") {
-        return res.status(400).json({ message: "Payment not completed." });
-      }
+      if (!sessionId) return res.status(400).json({ message: "Invalid request." });
 
       const transaction = await Transaction.findOne({ stripeSessionId: sessionId });
       if (!transaction) return res.status(404).json({ message: "Transaction not found." });
@@ -201,39 +230,40 @@ export function paymentRoutes({ requireAuth }) {
         return res.status(403).json({ message: "Unauthorized." });
       }
 
-      if (transaction.status === "paid") {
-        return res.json({ verified: true, alreadyProcessed: true });
-      }
-
-      transaction.status = "paid";
-      await transaction.save();
-
-      if (session.metadata.type === "purchase") {
-        const [artwork, buyer] = await Promise.all([
-          Artwork.findById(transaction.artwork),
-          User.findById(transaction.buyer)
-        ]);
-        if (artwork) { artwork.status = "sold"; }
-        if (buyer) { buyer.purchaseCount = (buyer.purchaseCount || 0) + 1; }
-        await Promise.all([artwork?.save(), buyer?.save()].filter(Boolean));
-      }
-
-      if (session.metadata.type === "subscription") {
-        const user = await User.findById(transaction.buyer);
-        if (user) {
-          user.subscriptionTier = session.metadata.tier;
-          await user.save();
-        }
-      }
-
-      res.json({ verified: true });
+      // Source of truth is the webhook; this just reports current DB state
+      // so the frontend can poll after redirect instead of driving the update itself.
+      res.json({
+        verified: transaction.status === "paid",
+        status: transaction.status
+      });
     } catch (err) {
       next(err);
     }
   });
 
-  router.post("/webhook", express.raw({ type: "application/json" }), async (_req, res) => {
-    res.json({ received: true, message: "Stripe webhook placeholder. Add signing secret before production." });
+  router.post("/webhook", express.raw({ type: "application/json" }), async (req, res) => {
+    if (!stripe || !webhookSecret) {
+      return res.status(503).json({ message: "Stripe webhook is not configured." });
+    }
+
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, req.headers["stripe-signature"], webhookSecret);
+    } catch (err) {
+      console.error("Stripe webhook signature verification failed:", err.message);
+      return res.status(400).json({ message: "Webhook signature verification failed." });
+    }
+
+    if (event.type === "checkout.session.completed") {
+      try {
+        await fulfillCheckoutSession(event.data.object);
+      } catch (err) {
+        console.error("Stripe webhook fulfillment failed:", err);
+        return res.status(500).json({ message: "Webhook handler failed." });
+      }
+    }
+
+    res.json({ received: true });
   });
 
   return router;
