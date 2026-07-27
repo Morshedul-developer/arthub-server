@@ -4,6 +4,8 @@ import { Artwork, Transaction, User } from "../models/index.js";
 export function dashboardRoutes({ requireAuth, requireRole }) {
   const router = express.Router();
 
+  const allowedRoles = ["user", "artist", "admin"];
+
   router.get("/user", requireAuth, async (req, res) => {
     const purchases = await Transaction.find({
       buyer: req.user._id,
@@ -77,15 +79,23 @@ export function dashboardRoutes({ requireAuth, requireRole }) {
     });
   });
 
-  router.patch("/admin/users/:id/role", requireAuth, requireRole(["admin"]), async (req, res) => {
-    const user = await User.findByIdAndUpdate(
-      req.params.id,
-      { role: req.body.role },
-      { new: true, runValidators: true }
-    );
+  router.patch("/admin/users/:id/role", requireAuth, requireRole(["admin"]), async (req, res, next) => {
+    try {
+      if (!allowedRoles.includes(req.body.role)) {
+        return res.status(400).json({ message: `Role must be one of: ${allowedRoles.join(", ")}.` });
+      }
 
-    if (!user) return res.status(404).json({ message: "User not found." });
-    res.json(user);
+      const user = await User.findByIdAndUpdate(
+        req.params.id,
+        { role: req.body.role },
+        { new: true, runValidators: true }
+      );
+
+      if (!user) return res.status(404).json({ message: "User not found." });
+      res.json(user);
+    } catch (err) {
+      next(err);
+    }
   });
 
   return router;
