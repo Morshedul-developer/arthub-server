@@ -1,6 +1,10 @@
 import express from "express";
 import { Artwork, Comment, Transaction, User } from "../models/index.js";
 
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function artworkRoutes({ requireAuth, requireRole }) {
   const router = express.Router();
 
@@ -18,9 +22,12 @@ export function artworkRoutes({ requireAuth, requireRole }) {
     const query = {};
 
     if (search) {
+      const safeSearch = escapeRegex(search);
+      const matchingArtists = await User.find({ name: { $regex: safeSearch, $options: "i" } }).select("_id");
       query.$or = [
-        { title: { $regex: search, $options: "i" } },
-        { category: { $regex: search, $options: "i" } }
+        { title: { $regex: safeSearch, $options: "i" } },
+        { category: { $regex: safeSearch, $options: "i" } },
+        { artist: { $in: matchingArtists.map((artist) => artist._id) } }
       ];
     }
 
