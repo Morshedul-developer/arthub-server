@@ -19,7 +19,7 @@ export function artworkRoutes({ requireAuth, requireRole }) {
       limit = 8
     } = req.query;
 
-    const query = {};
+    const query = { status: "active" };
 
     if (search) {
       const safeSearch = escapeRegex(search);
