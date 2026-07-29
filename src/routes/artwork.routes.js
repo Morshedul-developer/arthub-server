@@ -82,18 +82,34 @@ export function artworkRoutes({ requireAuth, requireRole }) {
       { $limit: 3 }
     ]);
 
-    const fallbackArtists = await User.find({ role: "artist" }).limit(3);
-    const artists = sales.length
-      ? await User.find({ _id: { $in: sales.map((item) => item._id) } })
-      : fallbackArtists;
+    if (!sales.length) {
+      const fallbackArtists = await User.find({ role: "artist" }).limit(3);
+      return res.json(fallbackArtists.map((artist) => ({
+        _id: artist._id,
+        name: artist.name,
+        email: artist.email,
+        avatarUrl: artist.avatarUrl,
+        sales: 0
+      })));
+    }
 
-    res.json(artists.map((artist) => ({
-      _id: artist._id,
-      name: artist.name,
-      email: artist.email,
-      avatarUrl: artist.avatarUrl,
-      sales: sales.find((item) => String(item._id) === String(artist._id))?.sales || 0
-    })));
+    const artists = await User.find({ _id: { $in: sales.map((item) => item._id) } });
+    const artistsById = new Map(artists.map((artist) => [String(artist._id), artist]));
+
+    const topArtists = sales
+      .map((item) => {
+        const artist = artistsById.get(String(item._id));
+        return artist && {
+          _id: artist._id,
+          name: artist.name,
+          email: artist.email,
+          avatarUrl: artist.avatarUrl,
+          sales: item.sales
+        };
+      })
+      .filter(Boolean);
+
+    res.json(topArtists);
   });
 
   router.get("/:id", async (req, res) => {
