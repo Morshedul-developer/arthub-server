@@ -5,6 +5,8 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const EDITABLE_ARTWORK_FIELDS = ["title", "description", "price", "category", "imageUrl"];
+
 export function artworkRoutes({ requireAuth, requireRole }) {
   const router = express.Router();
 
@@ -143,7 +145,10 @@ export function artworkRoutes({ requireAuth, requireRole }) {
       return res.status(403).json({ message: "Only the owner artist can edit this artwork." });
     }
 
-    Object.assign(artwork, req.body);
+    for (const field of EDITABLE_ARTWORK_FIELDS) {
+      if (field in req.body) artwork[field] = req.body[field];
+    }
+
     await artwork.save();
     res.json(artwork);
   });
